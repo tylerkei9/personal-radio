@@ -6,7 +6,8 @@ Read this before you install it. It is short.
 
 Everything is stored **on your own computer**, in the `data` folder. Nothing is uploaded anywhere by this program.
 (It does look things up on the public music databases, MusicBrainz and ListenBrainz, which means those services
-see song and artist codes from your library, not your name or account.)
+see song and artist codes from your library, not your name or account. One exception: if you set the optional
+`RADIO_CONTACT` setting to an email or web address, which MusicBrainz asks for, it is sent along with those requests.)
 
 | File in `data/` | What is in it |
 |---|---|

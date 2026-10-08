@@ -43,7 +43,7 @@ def to_snapshot(pb: dict | None) -> Snapshot:
 
 
 IDLE_LADDER = (10.0, 10.0, 20.0, 30.0, 60.0)   # seconds between polls while nothing is playing, by idle streak
-LONG_IDLE_POLLS = 60                             # after this many idle polls (~40 min) poll every 2 minutes
+LONG_IDLE_POLLS = 60                             # after this many idle polls (about an hour) poll every 2 minutes
 RECONCILE_EVERY_S = 3600
 GAP_S = 120                                      # silence longer than this (and 3x the planned delay) = sleep/offline gap
 

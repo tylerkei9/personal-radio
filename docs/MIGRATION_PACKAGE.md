@@ -1,11 +1,11 @@
-# Personal Radio — Migration Package
+# Personal Radio: Migration Package
 
 *One file with everything: what the project is, where it stands, how to move it to your PC, what is left to do,
 and (in the technical parts at the end) the full design history and research. Written 8 October 2026.*
 
-**Who this is for.** The first half (sections 1–8) is written for a non-technical reader. The second half
+**Who this is for.** The first half (sections 1–9) is written for a non-technical reader. The second half
 (Parts A–I) is the complete technical record, kept as it was produced, for anyone (including a future AI
-assistant) who needs the evidence behind a decision. You can stop reading after section 8 and still run the project.
+assistant) who needs the evidence behind a decision. You can stop reading after section 9 and still run the project.
 
 ## Contents
 
@@ -19,6 +19,7 @@ assistant) who needs the evidence behind a decision. You can stop reading after 
 | 6. Things that surprised us | Known quirks and risks |
 | 7. Command and folder map | Old names versus new names (the technical parts use the old ones) |
 | 8. Words used in this project | Glossary |
+| 9. The ideas, illustrated | Fourteen diagrams that explain the core concepts |
 | Parts A–I | The technical record: original handoff, session logs, research reports, research notes, research prompts, build log |
 
 ---
@@ -203,6 +204,116 @@ identical to Part C) was dropped as a duplicate.
 | Heartbeat | A small file the watcher keeps updating so you can tell it is alive |
 | DuckDB | The simple database format used for the files in `data/` |
 | Thompson sampling, LightGBM, DPP, MMR, IPS | Advanced techniques named in the research. Only matter if you read Parts C and D |
+
+## 9. The ideas, illustrated
+
+Each figure explains one idea. They are generated from the real program logic by `scripts/make_diagrams.py`, so
+the numbers match what the code does.
+
+### 9.1 The whole system
+
+![The whole system in five steps](images/01-pipeline.svg)
+
+Five steps run in a loop. The program watches your Spotify plays, grades them, looks up similar songs in open
+databases, picks 30, and writes a private playlist. What you play from that playlist becomes next week's data.
+
+### 9.2 Watching without wasting effort
+
+![Checking less often when nothing is playing](images/12-adaptive-checking.svg)
+
+The program asks Spotify what is playing every 4 seconds while a song plays. When nothing plays it slows down to
+once a minute, then once every 2 minutes. This cuts checks from about 8,600 to about 750 on an idle day. Nothing is
+lost, because a song's start time is worked out from how far into it you were when the program noticed. Once an
+hour, and right after a long silence such as the computer sleeping, it reads Spotify's "recently played" list to
+fill any gaps.
+
+### 9.3 From a play to a like or a dislike
+
+![How one play becomes a like or a dislike](images/02-play-to-label.svg)
+
+The program never asks you to rate anything. It reads behaviour. An early skip is a strong dislike, a late skip is
+a mild one, and finishing is a like. Stopping because the app closed says nothing, so it is ignored. Saving or
+replaying a song after you finish it makes the like strong.
+
+![A save only counts for plays before it](images/03-save-timing.svg)
+
+Timing matters. A save counts as proof only if it happens within 7 days after the play. A song saved a year ago
+and played today tells the program you already knew the song, not that this play was good. Counting it would
+inflate the scores of old favourites and make the program look better than it is.
+
+### 9.4 How much each like counts
+
+![Two ways the taste profile avoids being swamped](images/13-taste-weights.svg)
+
+Two simple curves shape your taste profile. Older likes fade: a like loses half its weight each year. And an
+artist's total pull grows with the square root of the number of liked songs, so 16 liked songs give 4 times the
+pull of one, not 16 times. Without this, one heavily saved artist would decide the whole playlist.
+
+### 9.5 Matching songs across services
+
+![Matching one song across services](images/04-song-identity.svg)
+
+Spotify, MusicBrainz and ListenBrainz each name songs differently. A recording code (ISRC) is the shared key. The
+program converts each Spotify song to an ISRC, then to MusicBrainz IDs. About 79% of the library matched. Unmatched
+songs cannot be used as starting points.
+
+### 9.6 Finding similar songs without Spotify
+
+![Where similar songs come from](images/05-co-listening.svg)
+
+There is no audio analysis. ListenBrainz publishes which songs people play in the same listening session. If
+song X and song Y keep showing up together, Y is a neighbour of X. The closer the ring in the map, the more often
+the pair is played together.
+
+### 9.7 Why famous songs do not dominate
+
+![The two-way check removes hub songs](images/06-two-way-check.svg)
+
+Some songs are neighbours of almost everything. These are hubs. A candidate is trusted only if it also points back:
+your song X must appear in the candidate's own neighbour list. Hubs fail this check. Good fits pass.
+
+![Three corrections applied to every candidate](images/07-three-corrections.svg)
+
+Three corrections adjust every score. The two-way check scales the score by how high your song ranks in the
+candidate's list. The breadth discount stops a song from winning only because many seeds list it. The popularity
+discount lowers the score of very well-known songs, and lowers it more for deep cuts so they are actually less
+famous.
+
+### 9.8 Choosing the 30 songs
+
+![How the 30 playlist songs are chosen](images/08-playlist-slots.svg)
+
+The playlist has four kinds of slots. Confident picks (15) are the best scores. Deep cuts (6) are songs you have not
+heard by artists you already like. Explore picks (6) are drawn at random with better scores more likely. Wildcards (3)
+are drawn evenly from the rest. The order is shuffled so position never reveals how a song was chosen.
+
+![Every pick has a recorded chance of being chosen](images/09-selection-chance.svg)
+
+The program records how likely each song was to be chosen. This chart comes from running the real playlist builder
+3,000 times. Confident songs are always in. Explore songs appear about a third of the time. Wildcards appear
+rarely. Recording the chance allows a fair measurement later: a rare pick that you loved is counted as standing in
+for about 20 similar songs that were never shown. Without it, safe picks would always look better than they are.
+
+### 9.9 Checking honestly whether it works
+
+![Testing on the future, not on a shuffle](images/10-test-on-the-future.svg)
+
+A random split trains on later days and tests on earlier ones. That leaks the future and flatters the result. The
+program tests on the future only: train on the past, leave a short gap, test on the next day, then slide forward.
+
+![Scoring a ranked list: why position matters](images/11-ranking-score.svg)
+
+Scores use a measure called NDCG. It gives more credit to a liked song near the top of a list. Two lists with the
+same two liked songs score 0.88 and 0.39 depending on where the hits sit. The recommender must beat simple
+baselines, such as replaying recent favourites, before it is trusted.
+
+### 9.10 What leaves your computer
+
+![What stays on your computer and what is sent out](images/14-data-flow.svg)
+
+Your history, saves and Spotify login stay in the `data/` folder. The program sends requests to Spotify, to
+ListenBrainz (song codes) and to MusicBrainz (recording codes). GitHub receives only the code. See
+[PRIVACY.md](PRIVACY.md).
 
 ---
 
@@ -2178,56 +2289,56 @@ The second takeaway is that compliance and engineering point the same way. Movin
 - **Secrets**: the Spotify Client Secret was pasted into chat. The user said they do not mind; rotating it is still advisable. It is deliberately not written in this file.
 
 ### Progress since this section was written (2026-10-08)
-- ✅ ⬜1 heartbeat: `radio/health.py` (poller rewrites `heartbeat.json` each loop; `python -m radio.health [--max-age 180] [--notify]` exits 1 when stale). **Takes effect after the tracker is restarted.** Supervisor config and Premium-lapse check still open.
-- ✅ ⬜3 timezone: `radio/timeutil.py` (`RADIO_TZ` or system zone; stored data stays naive UTC; DST-safe).
-- ✅ ⬜6 `QUOTA_EXCEEDED` reason is logged and written to the heartbeat. (Observed overnight: no 429s, only read timeouts.)
-- ✅ MusicBrainz resolver backs off exponentially and stops after 5 consecutive failures.
-- ✅ Bug fixed: OAuth token refresh had no timeout (`read timeout=None` seen in `radio.log`); `SpotifyOAuth` now gets `requests_timeout`.
+- [done] [open]1 heartbeat: `radio/health.py` (poller rewrites `heartbeat.json` each loop; `python -m radio.health [--max-age 180] [--notify]` exits 1 when stale). **Takes effect after the tracker is restarted.** Supervisor config and Premium-lapse check still open.
+- [done] [open]3 timezone: `radio/timeutil.py` (`RADIO_TZ` or system zone; stored data stays naive UTC; DST-safe).
+- [done] [open]6 `QUOTA_EXCEEDED` reason is logged and written to the heartbeat. (Observed overnight: no 429s, only read timeouts.)
+- [done] MusicBrainz resolver backs off exponentially and stops after 5 consecutive failures.
+- [done] Bug fixed: OAuth token refresh had no timeout (`read timeout=None` seen in `radio.log`); `SpotifyOAuth` now gets `requests_timeout`.
 - Identity cache: 164 tracks, 164 ISRCs, 123 MBIDs of 152 checked (**~81% match**, up from the partial 65%); 12 unchecked after MusicBrainz 503s.
 - Tests: 25 passing. Overnight the Mac tracker kept running but logged only ~20 plays and several read timeouts (laptop sleep/wake gaps) — evidence for the always-on-host requirement.
 
-- ✅ Baselines + evaluation harness (`radio/evalkit/`): `most_pop`, `decayed_replay` (the bar to beat), `item_knn` (session co-occurrence); `rolling_origin` splits with a gap (no leave-one-out); NDCG@10/Recall@10; paired block bootstrap over days. Run: `python -m radio.evalkit.run [--novel]` (`--novel` scores only never-trained-on tracks, the discovery case). Tested on synthetic data (31 tests pass). **On real data it reports 0 evaluable days**: only 16 labelled plays from one day exist (13 `strong_pos`, mostly already-saved tracks), so no numbers are meaningful until the Extended Streaming History is imported or ~2-4 weeks of tracking accumulate. Heartbeat/OAuth-timeout fixes are live only after the tracker is restarted.
+- [done] Baselines + evaluation harness (`radio/evalkit/`): `most_pop`, `decayed_replay` (the bar to beat), `item_knn` (session co-occurrence); `rolling_origin` splits with a gap (no leave-one-out); NDCG@10/Recall@10; paired block bootstrap over days. Run: `python -m radio.evalkit.run [--novel]` (`--novel` scores only never-trained-on tracks, the discovery case). Tested on synthetic data (31 tests pass). **On real data it reports 0 evaluable days**: only 16 labelled plays from one day exist (13 `strong_pos`, mostly already-saved tracks), so no numbers are meaningful until the Extended Streaming History is imported or ~2-4 weeks of tracking accumulate. Heartbeat/OAuth-timeout fixes are live only after the tracker is restarted.
 
-- ✅ **First playlist written (2026-10-08)**: private "Personal Radio - Weekly Auto", id in `personal_radio/playlist_state.json` (`2rEcexSySLkdB6qIpbKh2U`), 30 picks = 21 confident (p=1) / 6 explore (p≈0.44) / 3 wildcard (p=0.04), order shuffled. Run: `python -m radio.playlist [--write] [--n 30] [--seed N]` (dry run by default; reruns replace items via `PUT /playlists/{id}/items`; never repeats a past pick). Every pick is logged with slot, propensity, reason and position in `radio_recs.duckdb` (`picks` table). Code: `radio/playlist.py`, `radio/candidates/picker.py`; 36 tests pass.
-  - **Recommender-sourced tagging (⬜2) is now possible**: plays whose `context_uri` is `spotify:playlist:<playlist_id>` (from `picks`) came from the system. Not yet joined into labels/pipeline.
+- [done] **First playlist written (2026-10-08)**: private "Personal Radio - Weekly Auto", id in `personal_radio/playlist_state.json` (`2rEcexSySLkdB6qIpbKh2U`), 30 picks = 21 confident (p=1) / 6 explore (p≈0.44) / 3 wildcard (p=0.04), order shuffled. Run: `python -m radio.playlist [--write] [--n 30] [--seed N]` (dry run by default; reruns replace items via `PUT /playlists/{id}/items`; never repeats a past pick). Every pick is logged with slot, propensity, reason and position in `radio_recs.duckdb` (`picks` table). Code: `radio/playlist.py`, `radio/candidates/picker.py`; 36 tests pass.
+  - **Recommender-sourced tagging ([open]2) is now possible**: plays whose `context_uri` is `spotify:playlist:<playlist_id>` (from `picks`) came from the system. Not yet joined into labels/pipeline.
   - **Known weakness**: picks are mainstream hub artists (Ariana Grande, Bieber, Post Malone, The Weeknd, Lil Wayne). ListenBrainz `popularity/*` endpoints now return **401 and require a token**, so there is no popularity signal for the hubness penalty yet. Track choice per artist comes from a Spotify artist search (cached 1 day), so it favors popular songs and can include remixes. Needs the ListenBrainz token (also needed for `metadata/lookup`, feedback, `submit-listens`) and/or a Last.fm key.
   - Seeds were mostly saves/top tracks (25 seeds, 529 candidate artists, 105 candidate tracks).
 
-- ✅ **Seeds rebalanced toward liked songs (user request, 2026-10-08)**: `library_seeds` = per artist sqrt(sum of saves decayed with a 365-day half-life); top tracks x0.25 and recent plays x0.5 as minor boosts; `combine(top_n=40)` so all ~33 liked artists seed (82 of 102 saves have an artist MBID; library is exactly 102 tracks, no sync cap; `saves.ts` is Spotify's real `added_at`). Playlist re-written with 39 seeds (Steve Lacy, Clairo, Lana Del Rey, Mac Miller now appear). 37 tests pass. **Open question for the user**: all known artists are still excluded, so every pick is from an artist never played/saved; whether to add a "more from artists you like" slot (their unliked songs) is undecided.
+- [done] **Seeds rebalanced toward liked songs (user request, 2026-10-08)**: `library_seeds` = per artist sqrt(sum of saves decayed with a 365-day half-life); top tracks x0.25 and recent plays x0.5 as minor boosts; `combine(top_n=40)` so all ~33 liked artists seed (82 of 102 saves have an artist MBID; library is exactly 102 tracks, no sync cap; `saves.ts` is Spotify's real `added_at`). Playlist re-written with 39 seeds (Steve Lacy, Clairo, Lana Del Rey, Mac Miller now appear). 37 tests pass. **Open question for the user**: all known artists are still excluded, so every pick is from an artist never played/saved; whether to add a "more from artists you like" slot (their unliked songs) is undecided.
 
-- ✅ **Chill playlist merged into the taste basis (user request, 2026-10-08)**: `taste_basis.json` = `{"playlists": {"Chill": "<playlist-id>"}}`; `radio/basis.py` rebuilds table `basis_tracks` (in `radio_ids.duckdb`) from liked songs (102) + configured playlists (Chill: 67), deduplicated; `library_seeds` reads it. **Local only: nothing was added to the user's Spotify Liked Songs.** Reading playlists needed new scopes `playlist-read-private playlist-read-collaborative` (re-consented). 40 seeds now (Frank Ocean joined). 39 tests pass.
-- ⚠️ **Finding: the Weekly Auto playlist created earlier had vanished** (`GET /playlists/<id>` -> 404; `/me/playlists` listed only Chill), although the earlier `PUT .../items` had reported success. Cause unknown (deleted in the app, or the API accepted a write it did not keep) — unresolved, ask the user. `write_playlist` now verifies (exists, item count, listed in `/me/playlists`) and recreates on 404. New playlist id `51wlN6E7MlIJL9qjw7t7aU` (verified: exists, 30 items, in account). Candidate pool widened to 80 artists (145 candidate tracks). Lesson: never trust a 2xx from a playlist write without reading it back.
+- [done] **Chill playlist merged into the taste basis (user request, 2026-10-08)**: `taste_basis.json` = `{"playlists": {"Chill": "<playlist-id>"}}`; `radio/basis.py` rebuilds table `basis_tracks` (in `radio_ids.duckdb`) from liked songs (102) + configured playlists (Chill: 67), deduplicated; `library_seeds` reads it. **Local only: nothing was added to the user's Spotify Liked Songs.** Reading playlists needed new scopes `playlist-read-private playlist-read-collaborative` (re-consented). 40 seeds now (Frank Ocean joined). 39 tests pass.
+- [warning] **Finding: the Weekly Auto playlist created earlier had vanished** (`GET /playlists/<id>` -> 404; `/me/playlists` listed only Chill), although the earlier `PUT .../items` had reported success. Cause unknown (deleted in the app, or the API accepted a write it did not keep) — unresolved, ask the user. `write_playlist` now verifies (exists, item count, listed in `/me/playlists`) and recreates on 404. New playlist id `51wlN6E7MlIJL9qjw7t7aU` (verified: exists, 30 items, in account). Candidate pool widened to 80 artists (145 candidate tracks). Lesson: never trust a 2xx from a playlist write without reading it back.
 
 ### Research round 2 result received and verified (2026-10-08)
 Report saved as `reports/Fix labels and candidates before probing anything.md` (full text in Part H). Verdict on the user's question: **queue injection + genre probing = no for now, maybe later as a gated experiment** (81 independent probes per arm for ±10 pts at p=0.3, 97–146 with within-session correlation; ceiling ~+2 pp whole-playlist completion; ESH priors dominate for known genres). Prefer, in order: (d) passive Extended Streaming History, (a) better playlist arms, (c) optional taste quiz, (b) probes last, and via an "Up Next" playlist rather than the queue.
 
 **Claims I verified myself (same day):**
-- ✅ `POST https://api.listenbrainz.org/1/popularity/recording` and `GET /1/popularity/top-recordings-for-artist/{artist_mbid}` return **200 with no token** now. Earlier the same day the same artist path returned **401** ("provide an Auth token") — so MetaBrainz gates these **intermittently**. Code must handle 401 gracefully and a free LB token is still worth getting. (Corrects my earlier statement that popularity "now requires a token".)
-- ✅ `POST https://labs.api.listenbrainz.org/similar-recordings/json` works tokenless; body must be a list: `[{"recording_mbids": ["<mbid>"], "algorithm": "session_based_days_9000_session_300_contribution_5_threshold_15_limit_50_skip_30"}]` (a bare string for `recording_mbids` gives HTTP 400). Returns `recording_mbid, recording_name, artist_credit_name, release_mbid, score, reference_mbid`.
-- ✅ Spotify Developer Policy text (fetched via a summarizing tool, so verify wording yourself): **III.11** "Do not build products or services that mimic, or replicate or attempt to replace a core user experience of Spotify"; **III.13** "Do not analyze the Spotify Content or the Spotify Service for any purpose,"; **III.14** "Do not use the Spotify Platform or any Spotify Content to train a machine learning or AI model". III.13's *analysis* ban is a bigger exposure for skip/complete labels than the ML clause; practical enforcement risk is key revocation. Mitigations in the report (§A11): store keys only, features from MusicBrainz/ListenBrainz/Last.fm, train only on the user-owned Extended Streaming History, TTL-purge API-derived tables, working disconnect-and-delete path.
-- ⏳ Not yet verified: DW unreadable via API; Spotify artist `genres` in Dev Mode; whether existing app still has removed endpoints; skipped vs reason_end agreement (needs ESH).
+- [done] `POST https://api.listenbrainz.org/1/popularity/recording` and `GET /1/popularity/top-recordings-for-artist/{artist_mbid}` return **200 with no token** now. Earlier the same day the same artist path returned **401** ("provide an Auth token") — so MetaBrainz gates these **intermittently**. Code must handle 401 gracefully and a free LB token is still worth getting. (Corrects my earlier statement that popularity "now requires a token".)
+- [done] `POST https://labs.api.listenbrainz.org/similar-recordings/json` works tokenless; body must be a list: `[{"recording_mbids": ["<mbid>"], "algorithm": "session_based_days_9000_session_300_contribution_5_threshold_15_limit_50_skip_30"}]` (a bare string for `recording_mbids` gives HTTP 400). Returns `recording_mbid, recording_name, artist_credit_name, release_mbid, score, reference_mbid`.
+- [done] Spotify Developer Policy text (fetched via a summarizing tool, so verify wording yourself): **III.11** "Do not build products or services that mimic, or replicate or attempt to replace a core user experience of Spotify"; **III.13** "Do not analyze the Spotify Content or the Spotify Service for any purpose,"; **III.14** "Do not use the Spotify Platform or any Spotify Content to train a machine learning or AI model". III.13's *analysis* ban is a bigger exposure for skip/complete labels than the ML clause; practical enforcement risk is key revocation. Mitigations in the report (§A11): store keys only, features from MusicBrainz/ListenBrainz/Last.fm, train only on the user-owned Extended Streaming History, TTL-purge API-derived tables, working disconnect-and-delete path.
+- [unverified] Not yet verified: DW unreadable via API; Spotify artist `genres` in Dev Mode; whether existing app still has removed endpoints; skipped vs reason_end agreement (needs ESH).
 
 **Revised priority order (report's Stage 0, supersedes 0.3 where they conflict):** (1) fix labels: a save only upgrades a label if it happens *after* the play (`saved_asof_play` is a feature, `saved_within_W` upgrades); replace sample weights with features and give auto plays weight >= user-started; (2) switch candidates to `similar-recordings` + mutual proximity + breadth damping + `pop^-alpha` + calibrated re-rank; (3) within-artist track choice from LB top-recordings with release-group filtering and MMR, plus a capped (20–30%) deep-cuts slot from known artists; (4) adaptive polling on the Windows PC + hourly recently-played reconciler (cuts calls 5–10x, fixes sleep gaps); (5) compliance hardening; (6) ESH importer + empirical-Bayes shrunken rates; (7) blind team-draft-interleaved test vs Discover Weekly (copied by hand into an owned playlist). Defer LightGBM (needs ~2,000–5,000 labelled plays), Thompson sampling (stage 2), DPP (skip; use calibration + MMR). **Bug to fix:** logged explore propensities `k*softmax` can exceed 1 (Plackett-Luce sampling without replacement); replace with Monte Carlo replay of the whole generator (10k–50k runs) and log counts/R.
 
 ## 0.2 Research integration matrix
 *Question asked: was everything in the research folder considered and integrated into the plan? Answer after reading all files: the report-level conclusions were integrated; several note-level details were not. Status below is honest as of this review.*
 
-**Legend:** ✅ done/verified · 🟡 in the plan, not built · ⬜ **was missing from the plan; added to the backlog in 0.3**
+**Legend:** [done] done/verified · [planned] in the plan, not built · [open] **was missing from the plan; added to the backlog in 0.3**
 
 ### Report's eight changes
 | # | Recommendation | Status |
 |---|---|---|
-| 1 | Live API smoke test | ✅ playlist writes, `isrc:` search, top/saved/follows verified (see Part B §B). Batch `GET /tracks` 403 discovered. |
-| 2 | Decayed-replay and item-kNN baselines first | 🟡 planned, not built |
-| 3 | Log propensities; randomized exploration slice | 🟡 planned, not built (needs playlist writer first) |
-| 4 | Mirror plays to ListenBrainz; MBID/ISRC as primary key | ✅ key layer built (`ids.py`); 🟡 mirror not built (see ⬜ 4) |
-| 5 | Rolling-origin time splits + blind novelty-adjusted A/B | 🟡 planned, not built |
-| 6 | Beta-Bernoulli Thompson sampling over clusters/artists | 🟡 planned, not built |
-| 7 | DPP/MMR re-rank + calibration floor + narrowing metrics | 🟡 planned, not built |
-| 8 | LLM off the hot path (schema steering, grounded explanations) | 🟡 planned, not built |
+| 1 | Live API smoke test | [done] playlist writes, `isrc:` search, top/saved/follows verified (see Part B §B). Batch `GET /tracks` 403 discovered. |
+| 2 | Decayed-replay and item-kNN baselines first | [planned] planned, not built |
+| 3 | Log propensities; randomized exploration slice | [planned] planned, not built (needs playlist writer first) |
+| 4 | Mirror plays to ListenBrainz; MBID/ISRC as primary key | [done] key layer built (`ids.py`); [planned] mirror not built (see [open] 4) |
+| 5 | Rolling-origin time splits + blind novelty-adjusted A/B | [planned] planned, not built |
+| 6 | Beta-Bernoulli Thompson sampling over clusters/artists | [planned] planned, not built |
+| 7 | DPP/MMR re-rank + calibration floor + narrowing metrics | [planned] planned, not built |
+| 8 | LLM off the hot path (schema steering, grounded explanations) | [planned] planned, not built |
 
 ### Details found in the notes that were NOT in the condensed report/plan
-| ⬜ | Gap | Source note | Why it matters |
+| [open] | Gap | Source note | Why it matters |
 |---|---|---|---|
 | 1 | **Heartbeat row on every poll + stale alert; Premium-lapse health check; supervisor (launchd/NSSM)**. A sleeping PC or lapsed Premium silently stops data/app. | llm_and_systems §3, §5; prior_art | Data gaps corrupt labels and evaluation |
 | 2 | **Tag each play recommender-sourced vs organic** (Yambda `is_organic` analog): record the playlist ids the system writes (`recs` table) and mark plays whose `context_uri` matches | representations_diversity Q4; modeling_methods | Needed to correct exposure bias and to measure narrowing |
@@ -2256,39 +2367,39 @@ Report saved as `reports/Fix labels and candidates before probing anything.md` (
 | Everything else (Last.fm rate limit, Yambda license, Essentia license, LFM-2b/MPD availability, ListenBrainz dump license, private-session behavior, Spotify ML clause primary text) | **Still open**, see Part C "Contradictions" table and the notes' Gaps sections. |
 
 ## 0.3 Prioritized backlog (supersedes the roadmap in Part A where they conflict)
-1. **Identity**: finish MBID resolution (rerun `python -m radio.ids`; add backoff on MusicBrainz 503); resolve ISRC/MBID for saved and top tracks (done in the cache, retry pending); report match rate by category (remaster/live/regional) — ⬜13.
-2. **Operational safety**: heartbeat + stale alert, `QUOTA_EXCEEDED` handling, supervisor config — ⬜1, ⬜6. Windows PC setup with `install_windows_task.ps1`.
-3. **Data correctness**: store local timezone for plays — ⬜3; recommender-sourced tag via `recs` table — ⬜2.
-4. **Candidates**: hubness/popularity penalty using ListenBrainz/Last.fm popularity — ⬜5; per-artist recordings from ListenBrainz/Last.fm; Last.fm key + tags — ⬜12; seeds from saves/top via the cached IDs.
-5. **Baselines + evaluation harness** (decayed replay, implicit item-kNN, rolling-origin split with gap, paired bootstrap over days) — ⬜8, ⬜14. Request the Extended Streaming History now (up to 30 days) so this has data.
-6. **First nightly playlist**: Spotify URI resolution via `isrc:` search → heuristic scorer → write "Weekly Auto" (private, replace items), randomized order with logged positions and sampling probability per pick — ⬜7.
+1. **Identity**: finish MBID resolution (rerun `python -m radio.ids`; add backoff on MusicBrainz 503); resolve ISRC/MBID for saved and top tracks (done in the cache, retry pending); report match rate by category (remaster/live/regional) — [open]13.
+2. **Operational safety**: heartbeat + stale alert, `QUOTA_EXCEEDED` handling, supervisor config — [open]1, [open]6. Windows PC setup with `install_windows_task.ps1`.
+3. **Data correctness**: store local timezone for plays — [open]3; recommender-sourced tag via `recs` table — [open]2.
+4. **Candidates**: hubness/popularity penalty using ListenBrainz/Last.fm popularity — [open]5; per-artist recordings from ListenBrainz/Last.fm; Last.fm key + tags — [open]12; seeds from saves/top via the cached IDs.
+5. **Baselines + evaluation harness** (decayed replay, implicit item-kNN, rolling-origin split with gap, paired bootstrap over days) — [open]8, [open]14. Request the Extended Streaming History now (up to 30 days) so this has data.
+6. **First nightly playlist**: Spotify URI resolution via `isrc:` search → heuristic scorer → write "Weekly Auto" (private, replace items), randomized order with logged positions and sampling probability per pick — [open]7.
 7. **Thompson sampling over clusters/artists (~10%)**, DPP/MMR + calibration floor, narrowing metrics.
-8. **ListenBrainz mirror via direct `submit-listens`** — ⬜4.
+8. **ListenBrainz mirror via direct `submit-listens`** — [open]4.
 9. **LightGBM ranker**, only if it beats baselines on the harness; blind A/B vs Discover Weekly scoring unfamiliar tracks only.
 10. **Stretch**: session layer + just-in-time queue, LLM steering/explanations, FastAPI dashboard, tag embeddings/Essentia, ListenBrainz-space pretraining. Defer sequence models, HSTU, Mamba, RL, audio foundation models.
-11. **Standing tasks**: read the Spotify Developer Terms/Policy primary text (⬜9); empirical tests of Private Session/offline/handoff (⬜11); rotate the Client Secret.
+11. **Standing tasks**: read the Spotify Developer Terms/Policy primary text ([open]9); empirical tests of Private Session/offline/handoff ([open]11); rotate the Client Secret.
 
 ---
 
 
 
 ## Progress 2026-10-08 (late): Stage 0 items 1-3 built (Claude Code)
-- ✅ **Labels** (`radio/pipeline.py`): a save upgrades a play's label only if it came *after* the play within `SAVE_WINDOW` (7 d); an earlier save is the feature `saved_asof_play`. `saves` is now read as `{uri: added_at}`. All sample weights are 1.0 (autoplay no longer down-weighted); `start_kind`/`intent` are features on each row.
-- ✅ **Propensities** (`radio/candidates/picker.py`): logged propensity = Monte Carlo inclusion probability from 10,000 replays of the whole generator (always in (0,1]); old `k*softmax` removed. Slots are now confident 50% / deepcut 20% (capped) / explore 20% / wildcard 10%; with no deep-cut pool the share reverts to confident.
-- ✅ **Candidates** (`radio/candidates/recordings.py`): LB `similar-recordings` per seed recording; score = sum of seed weight x normalised similarity x sqrt(mutual-proximity), / sqrt(#seeds) (breadth damping), x popularity^-0.3 (LB `total_user_count`; skipped gracefully on 401). Then MusicBrainz lookup drops remix/live/extended/karaoke titles and Live/Remix/Compilation/DJ-mix/Demo release groups, keeps one track per release group, and resolves to Spotify by exact ISRC. Candidates by artists you already like become the `deepcut` slot. `python -m radio.playlist --artist-level` keeps the old path for comparison.
+- [done] **Labels** (`radio/pipeline.py`): a save upgrades a play's label only if it came *after* the play within `SAVE_WINDOW` (7 d); an earlier save is the feature `saved_asof_play`. `saves` is now read as `{uri: added_at}`. All sample weights are 1.0 (autoplay no longer down-weighted); `start_kind`/`intent` are features on each row.
+- [done] **Propensities** (`radio/candidates/picker.py`): logged propensity = Monte Carlo inclusion probability from 10,000 replays of the whole generator (always in (0,1]); old `k*softmax` removed. Slots are now confident 50% / deepcut 20% (capped) / explore 20% / wildcard 10%; with no deep-cut pool the share reverts to confident.
+- [done] **Candidates** (`radio/candidates/recordings.py`): LB `similar-recordings` per seed recording; score = sum of seed weight x normalised similarity x sqrt(mutual-proximity), / sqrt(#seeds) (breadth damping), x popularity^-0.3 (LB `total_user_count`; skipped gracefully on 401). Then MusicBrainz lookup drops remix/live/extended/karaoke titles and Live/Remix/Compilation/DJ-mix/Demo release groups, keeps one track per release group, and resolves to Spotify by exact ISRC. Candidates by artists you already like become the `deepcut` slot. `python -m radio.playlist --artist-level` keeps the old path for comparison.
 - Coverage caveat: only 39 of 90 seed recordings had neighbours; a candidate with no neighbour list of its own gets a neutral mutual-proximity factor (0.5), not zero. Calibrated Head/Mid/Tail re-rank (report step 4 of A1) and `top-recordings-for-artist` (401 intermittently) are **not** built.
 - Offline run (stubbed Spotify) gave 87 candidates (69 new-artist, 18 deep cut), led by Saba, Oliver Tree, NIKI, keshi, Knucks rather than Ariana Grande/Bieber. The real Spotify resolve + `--write` has not been run yet.
 - 49 tests pass. Not done: items 4 (poller on PC), 5 (compliance/TTL purge), 6 (ESH import).
 
 ## Progress 2026-10-08 (night): playlist written; Stage 0 item 4 built (Claude Code)
-- ✅ **Playlist written** with the new pipeline: id `<playlist-id>` (30 picks: 15 confident / 6 deepcut / 6 explore / 3 wildcard, propensities all <= 1, logged in `radio_recs.duckdb`). Deep cuts got an extra popularity penalty (`DEEP_EXTRA_ALPHA` 0.5). **The previous playlist `51wl…` returned 404 only ~2.5 h after it was written and verified** (second time a Weekly Auto playlist vanished). Cause unknown; user asked whether they deleted it. If it recurs untouched, stop relying on a saved id.
-- ✅ **Adaptive polling** (`radio/poller.py`): playing mid-track 4 s, last 8 s of a track 1.5 s, idle/paused ladder 10, 10, 20, 30, 60 s, then 120 s after 60 idle polls (about 40 min). Idle calls drop from ~8,600/day to ~720-1,400.
-- ✅ **Reconciler** (`radio/sync.py: backfill_recent/missing_recent`): hourly and immediately after any gap (> max(120 s, 3x planned delay)), run *after* the poll's own plays are stored. Dedupes by time window per track (not "newer than last play"), so the poller and the reconciler never double-count. Gaps are logged as `raw_events` kind `gap`. Reconciled rows have `source='recent'`, `end_reason='other'` (exposure only, no label).
+- [done] **Playlist written** with the new pipeline: id `<playlist-id>` (30 picks: 15 confident / 6 deepcut / 6 explore / 3 wildcard, propensities all <= 1, logged in `radio_recs.duckdb`). Deep cuts got an extra popularity penalty (`DEEP_EXTRA_ALPHA` 0.5). **The previous playlist `51wl…` returned 404 only ~2.5 h after it was written and verified** (second time a Weekly Auto playlist vanished). Cause unknown; user asked whether they deleted it. If it recurs untouched, stop relying on a saved id.
+- [done] **Adaptive polling** (`radio/poller.py`): playing mid-track 4 s, last 8 s of a track 1.5 s, idle/paused ladder 10, 10, 20, 30, 60 s, then 120 s after 60 idle polls (about an hour). Idle calls drop from about 8,600 a day to about 750 (simulated with the real code).
+- [done] **Reconciler** (`radio/sync.py: backfill_recent/missing_recent`): hourly and immediately after any gap (> max(120 s, 3x planned delay)), run *after* the poll's own plays are stored. Dedupes by time window per track (not "newer than last play"), so the poller and the reconciler never double-count. Gaps are logged as `raw_events` kind `gap`. Reconciled rows have `source='recent'`, `end_reason='other'` (exposure only, no label).
 - Tests: 55 pass (`tests/test_polling.py` added); fake-clock loop smoke test confirmed the backoff, gap event and reconcile ordering. **Takes effect when the tracker is restarted** (`python -m radio.run`); the Windows PC is still not set up.
 - Next: item 5 (compliance: TTL purge of Spotify-derived tables, disconnect-and-delete path), item 6 (ESH import when it arrives).
 
 ## Progress 2026-10-08 (night): Stage 0 item 5, retention + disconnect (Claude Code)
-- ✅ `radio/retention.py`: `purge` deletes `raw_events` older than 30 days (`RAW_EVENTS_DAYS`) and Spotify-content cache files older than 24 h. Spotify cache keys (`sp-*`) now live in `.api_cache/spotify/`; legacy Spotify cache files in the cache root are recognised by content and removed. Runs at tracker startup and after every 6-hourly sync (`radio/run.py`).
-- ✅ `python -m radio.retention` (report), `--purge`, `--disconnect --yes` (deletes plays, saves, follows, top items, raw events, `track_ids`, `basis_tracks`, the `picks` log, all caches and the OAuth token; says to also revoke the app at spotify.com/account/apps). Needs the tracker stopped (DuckDB write lock).
+- [done] `radio/retention.py`: `purge` deletes `raw_events` older than 30 days (`RAW_EVENTS_DAYS`) and Spotify-content cache files older than 24 h. Spotify cache keys (`sp-*`) now live in `.api_cache/spotify/`; legacy Spotify cache files in the cache root are recognised by content and removed. Runs at tracker startup and after every 6-hourly sync (`radio/run.py`).
+- [done] `python -m radio.retention` (report), `--purge`, `--disconnect --yes` (deletes plays, saves, follows, top items, raw events, `track_ids`, `basis_tracks`, the `picks` log, all caches and the OAuth token; says to also revoke the app at spotify.com/account/apps). Needs the tracker stopped (DuckDB write lock).
 - **Deliberate defaults, not legal advice:** plays/saves/follows/top items/labels are kept (they are the user's own listening record and what labels need); only raw payloads and Spotify content caches expire. The wider question (III.13 "do not analyze the Spotify Content") is unresolved; the primary text still needs to be read by the user. Whether to also expire `plays`/`saves` is open. DuckDB files do not shrink after DELETE; `--disconnect` runs CHECKPOINT only.
 - 58 tests pass. Next: item 6 (Extended Streaming History import, once the export arrives; `radio/history_import.py` exists but is untested on real data).
