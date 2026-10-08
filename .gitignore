@@ -1,0 +1,23 @@
+# Your personal data and credentials: NEVER commit these
+data/
+config/taste_basis.json
+.env
+*.duckdb
+*.duckdb.wal
+*.duckdb.bak*
+.spotify_cache
+.api_cache/
+heartbeat.json
+playlist_state.json
+*.log
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
