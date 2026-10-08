@@ -33,7 +33,7 @@ It is made for one person (you). It runs on your own computer. Nothing is shared
 | Understand how it decides things | [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md) |
 | Know what is stored and how to erase it | [docs/PRIVACY.md](docs/PRIVACY.md) |
 | Move everything from another computer, or read the full project history and research | [docs/MIGRATION_PACKAGE.md](docs/MIGRATION_PACKAGE.md) |
-| Read the same migration package as a PDF (100 pages, with figures) | [docs/MIGRATION_PACKAGE.pdf](docs/MIGRATION_PACKAGE.pdf) |
+| Get the migration package as a PDF | Not stored in the repo. Build it with `python scripts/make_pdf.py` |
 
 ## The ideas, illustrated
 

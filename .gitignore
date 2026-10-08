@@ -21,3 +21,6 @@ __pycache__/
 .DS_Store
 .idea/
 .vscode/
+
+# Generated documents (rebuild with scripts/make_pdf.py)
+docs/*.pdf
